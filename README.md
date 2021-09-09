@@ -1,8 +1,6 @@
 # Rust Devcontainer
 
-A Rust development container that help you keeping everything up to date.
-
-![Demo](demo.gif)
+A Rust development container.
 
 ## Usage
 
