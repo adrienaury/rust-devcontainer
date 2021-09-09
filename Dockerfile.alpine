@@ -1,0 +1,102 @@
+ARG ALPINE_VERSION=3.14
+ARG DOCKER_VERSION=20.10.8
+ARG DOCKER_COMPOSE_VERSION=1.29.2
+
+FROM docker:${DOCKER_VERSION} AS docker
+FROM docker/compose:alpine-${DOCKER_COMPOSE_VERSION} AS docker-compose
+
+####################################################################################
+## rust-devcontainer-ci-alpine stage                                              ##
+##   contains minimal setup to run on a CI platform                               ##
+####################################################################################
+
+FROM alpine:${ALPINE_VERSION} AS rust-devcontainer-ci-alpine
+
+# Required packages for CI
+RUN apk add -q --update --progress --no-cache \
+    ca-certificates \
+    wget curl \
+    bash zsh \
+    git
+
+# Rust
+RUN curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
+
+COPY scripts/cache-command.sh /usr/bin/cache
+COPY scripts/install-tool.sh /usr/bin/up
+
+RUN addgroup -g 1000 -S vscode \
+    && adduser -S -s /bin/zsh -G vscode -D -u 1000 vscode \
+    && cp -r /root/. /home/vscode \
+    && chown -R vscode:vscode /home/vscode
+
+USER vscode
+
+RUN    sudo up venom 1.0.0-rc.7 \
+    && sudo up neon  1.5.3 \
+    && sudo up svu   1.7.0
+
+####################################################################################
+## rust-devcontainer-slim-alpine stage                                            ##
+##   contains a slim setup for development usage                                  ##
+####################################################################################
+
+FROM rust-devcontainer-ci-alpine AS rust-devcontainer-slim-alpine
+
+USER root
+
+# Timezones
+RUN apk add -q --update --progress --no-cache \
+    tzdata \
+    su-exec sudo \
+    git-perl \
+    figlet \
+    jq \
+    # Promote user as sudoer
+    && echo vscode ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/vscode \
+    && chmod 0440 /etc/sudoers.d/vscode
+
+USER vscode
+
+# Default values, override with a dotfile repository (https://code.visualstudio.com/docs/remote/containers#_personalizing-with-dotfile-repositories)
+ENV TZ= \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    TERM=xterm
+
+# Zsh Theme
+RUN wget -O- -nv https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh | sh \
+    && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k \
+    && rm -rf ~/.oh-my-zsh/custom/themes/powerlevel10k/.git* \
+    && mkdir -p ~/.cache/gitstatus \
+    && wget -O- -nv https://github.com/romkatv/gitstatus/releases/download/v1.3.1/gitstatusd-linux-x86_64.tar.gz | tar -xz -C ~/.cache/gitstatus gitstatusd-linux-x86_64
+
+# Zsh Theme configuration
+COPY .zshrc /home/vscode/.zshrc
+COPY .p10k.zsh /home/vscode/.p10k.zsh
+
+# Docker CLI and docker-compose
+COPY --from=docker /usr/local/bin/docker /usr/bin/docker
+COPY --from=docker-compose /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+COPY welcome.sh /home/vscode/welcome.sh
+COPY scripts/list-docker-tags.sh /usr/bin/dtags
+COPY scripts/get-latest-version-docker.sh /usr/bin/dlast
+COPY scripts/get-latest-version-github.sh /usr/bin/glast
+COPY scripts/update-docker.sh /usr/bin/up-docker
+COPY scripts/update-docker-compose.sh /usr/bin/up-docker-compose
+COPY scripts/update-git.sh /usr/bin/up-git
+
+ENTRYPOINT [ "/bin/zsh" ]
+
+####################################################################################
+## rust-devcontainer-full-alpine stage                                            ##
+##   contains a full setup for development usage                                  ##
+####################################################################################
+
+FROM rust-devcontainer-slim-alpine AS rust-devcontainer-full-alpine
+
+# Optionnal tools
+RUN    sudo up changie 1.0.0 \
+    && sudo up cli     2.0.0
